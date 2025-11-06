@@ -14,19 +14,19 @@ phases:
 
   build:
     commands:
-      - echo "Running container for testing..."
-      - docker run -d --name app_test -p 3000:3000 $IMAGE_URI
+      - echo "Running container for testing (host 80 -> container 3000)..."
+      - docker run -d --name app_test -p 80:3000 $IMAGE_URI
       - echo "Waiting for app to start..."
-      - sleep 5
+      - sleep 10
       - docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
   post_build:
     commands:
-      - echo "Running smoke tests with retries..."
+      - echo "Running smoke tests with retries on http://localhost/health ..."
       - |
         OK=0
         for i in $(seq 1 30); do
-          if curl -fsS http://localhost:3000/health > health_response.log 2>&1; then
+          if curl -fsS http://localhost/health > health_response.log 2>&1; then
             echo "Health OK"; cat health_response.log; OK=1; break
           fi
           echo "[$i/30] Not ready yet, retrying..."; sleep 2
@@ -36,8 +36,8 @@ phases:
           echo "Health check failed. Dumping container logs..."
           docker ps -a || true
           docker logs app_test || true
-          # Attempt internal curl (in case port mapping failed)
-          docker exec app_test sh -lc 'command -v curl >/dev/null 2>&1 || (apk add --no-cache curl >/dev/null 2>&1 || apt-get update && apt-get install -y curl >/dev/null 2>&1 || true); curl -fsS http://127.0.0.1:3000/health' || true
+          # Try from inside the container on its internal port 3000
+          docker exec app_test sh -lc 'command -v curl >/dev/null 2>&1 || (apk add --no-cache curl >/dev/null 2>&1 || (apt-get update && apt-get install -y curl >/dev/null 2>&1) || true); curl -fsS http://127.0.0.1:3000/health' || true
           exit 1
         fi
 
