@@ -4,8 +4,11 @@ env:
   variables:
     IMAGE_NAME: "test-image"
     IMAGE_TAG: "${IMAGE_TAG:-latest}"
-    TEST_URL: "http://localhost:3000"
-    TEST_COMMAND: "curl -f -s ${TEST_URL} || exit 1"
+    TEST_HOST: "localhost"
+    TEST_PORT: "3000"
+    TEST_PATH: "/"                 # change to /health or your ready endpoint
+    STARTUP_TIMEOUT: "90"          # seconds
+    CURL_MAX_RETRIES: "12"         # 12 * 5s = 60s of curl retries
 
 phases:
   pre_build:
@@ -19,13 +22,58 @@ phases:
       - docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
   post_build:
     commands:
-      - echo "Running container for smoke test..."
-      - docker run -d --rm -p 3000:3000 --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}
-      - echo "Waiting for app to be ready..."
-      - sleep 5
-      - echo "Executing test command..."
-      - bash -c "${TEST_COMMAND}"
-      - echo "✅ Tests passed successfully!"
+      - set -e
+      - echo "Running container on port ${TEST_PORT}..."
+      # Ensure the app binds to 0.0.0.0:3000 inside the container. Set env if your app needs it.
+      - docker run -d --rm -e PORT=${TEST_PORT} -e HOST=0.0.0.0 -p ${TEST_PORT}:${TEST_PORT} --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}
+      - echo "Container started: $(docker ps --filter name=app-under-test --format '{{.ID}} {{.Status}}')"
+
+      # Quick check if container exited early
+      - |
+        for i in $(seq 1 ${STARTUP_TIMEOUT}); do
+          if docker ps --filter name=app-under-test --format '{{.ID}}' >/dev/null | grep -q .; then
+            break
+          fi
+          sleep 1
+        done
+
+      - echo "Waiting for service to be ready (up to ${STARTUP_TIMEOUT}s)..."
+      - |
+        elapsed=0
+        while [ $elapsed -lt ${STARTUP_TIMEOUT} ]; do
+          # If container died, dump logs and fail
+          if ! docker ps --filter name=app-under-test --format '{{.ID}}' | grep -q .; then
+            echo "Container exited during startup. Logs:"
+            docker logs app-under-test || true
+            exit 1
+          fi
+          # Try a quick TCP check
+          (echo > /dev/tcp/${TEST_HOST}/${TEST_PORT}) >/dev/null 2>&1 && break
+          sleep 2
+          elapsed=$((elapsed+2))
+        done
+
+      - echo "Running HTTP smoke test against http://${TEST_HOST}:${TEST_PORT}${TEST_PATH}..."
+      - |
+        n=0
+        until [ $n -ge ${CURL_MAX_RETRIES} ]; do
+          if curl -fsS "http://${TEST_HOST}:${TEST_PORT}${TEST_PATH}" >/dev/null; then
+            echo "✅ Smoke test passed"
+            break
+          fi
+          n=$((n+1))
+          echo "Waiting for app... ($n/${CURL_MAX_RETRIES})"
+          sleep 5
+        done
+        if [ $n -ge ${CURL_MAX_RETRIES} ]; then
+          echo "❌ Smoke test failed. Dumping logs:"
+          docker ps -a
+          docker logs app-under-test || true
+          # If the container is still up, show listening ports
+          (docker exec app-under-test sh -c "apk add --no-cache net-tools || true; ss -lnt || netstat -lnt") || true
+          exit 1
+        fi
+
       - echo "Stopping container..."
       - docker stop app-under-test || true
 
