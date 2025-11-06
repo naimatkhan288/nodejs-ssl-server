@@ -1,34 +1,62 @@
 version: 0.2
 
+env:
+  variables:
+    APP_PORT: "3000"           # change if your app uses a different port
+    APP_HEALTH_PATH: "/health" # change if your health endpoint differs
+    TEST_CONTAINER_NAME: "app_test"
+
 phases:
   pre_build:
     commands:
+      - set -e
       - echo "Logging in to Amazon ECR..."
       - aws --version
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
-      - IMAGE_URI=$REPOSITORY_URI:$IMAGE_TAG
-      - echo "Pulling the image for testing..."
-      - docker pull $IMAGE_URI
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
+        | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+
+      # Recompute REPOSITORY_URI the same way as in your Build spec
+      - REPOSITORY_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME"
+
+      # If IMAGE_TAG isn't injected, fall back to commit SHA (must match what Build used)
+      - if [ -z "$IMAGE_TAG" ]; then IMAGE_TAG="$CODEBUILD_RESOLVED_SOURCE_VERSION"; fi
+
+      - IMAGE_URI="$REPOSITORY_URI:$IMAGE_TAG"
+      - echo "Pulling image: $IMAGE_URI"
+      - docker pull "$IMAGE_URI"
 
   build:
     commands:
-      - echo "Running container for testing..."
-      - docker run -d --name app_test -p 3000:3000 $IMAGE_URI
-      - echo "Waiting for app to start..."
-      - sleep 10
+      - echo "Starting container for tests..."
+      # Add -e KEY=VALUE if your app requires env vars to start
+      - docker run -d --rm --name "$TEST_CONTAINER_NAME" -p "$APP_PORT:$APP_PORT" "$IMAGE_URI"
+      - echo "Initial wait..."
+      - sleep 5
+      - echo "Containers:"
+      - docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
   post_build:
     commands:
-      - echo "Running smoke tests..."
-      # Example health endpoint test (adjust endpoint/port as per your app)
-      - curl -f http://localhost:3000/health || (echo "Health check failed!" && exit 1)
-      - echo "Container tests passed successfully"
-      - docker stop app_test
-      - docker rm app_test
+      - echo "Running smoke test with retries..."
+      - |
+        OK=0
+        for i in $(seq 1 30); do
+          if curl -fsS "http://localhost:${APP_PORT}${APP_HEALTH_PATH}" > health_response.log 2>&1; then
+            echo "Health OK"; cat health_response.log; OK=1; break
+          fi
+          echo "[$i/30] Not ready yet, retrying..."; sleep 2
+        done
 
-reports:
-  smoketests:
-    files:
-      - "**/*.log"
-    file-format: TEXT
+        if [ "$OK" -ne 1 ]; then
+          echo "Host curl failed. Trying inside the container..."
+          docker exec "$TEST_CONTAINER_NAME" sh -lc 'command -v curl >/dev/null 2>&1 || (apk add --no-cache curl >/dev/null 2>&1 || (apt-get update && apt-get install -y curl >/dev/null 2>&1) || true)'
+          if ! docker exec "$TEST_CONTAINER_NAME" curl -fsS "http://127.0.0.1:${APP_PORT}${APP_HEALTH_PATH}" > health_response.log 2>&1; then
+            echo "Health check failed. Dumping container logs:"; docker logs "$TEST_CONTAINER_NAME" || true
+            exit 1
+          else
+            echo "Health OK (from inside container)"; cat health_response.log
+          fi
+        fi
+
+      - echo "Stopping test container..."
+      - docker stop "$TEST_CONTAINER_NAME"
