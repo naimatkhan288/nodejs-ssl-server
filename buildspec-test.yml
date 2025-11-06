@@ -4,34 +4,29 @@ env:
   variables:
     IMAGE_NAME: "test-image"
     IMAGE_TAG: "${IMAGE_TAG:-latest}"
-    TEST_HOST: "localhost"
     TEST_PORT: "3000"
     TEST_PATH: "/"
-    STARTUP_TIMEOUT: "90"
-    CURL_MAX_RETRIES: "12"
+    CURL_MAX_RETRIES: "20"   # 20 * 5s = up to ~100s
 
 phases:
   pre_build:
     commands:
-      - echo "Starting test build on $(date)"
-      - docker --version
-      - aws --version
+      - "echo Starting test build on $(date)"
+      - "docker --version"
   build:
     commands:
-      - echo "Building local Docker image..."
-      - docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+      - "echo Building local Docker image..."
+      - "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
   post_build:
     commands:
-      - set -e
-      - echo "Running container on port ${TEST_PORT}..."
-      - docker run -d --rm -e PORT=${TEST_PORT} -e HOST=0.0.0.0 -p ${TEST_PORT}:${TEST_PORT} --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}
-      - echo "Container started: $(docker ps --filter name=app-under-test --format '{{.ID}} {{.Status}}')"
-      # wait up to STARTUP_TIMEOUT seconds for the port to open
-      - bash -c 'elapsed=0; while [ $elapsed -lt ${STARTUP_TIMEOUT} ]; do docker ps --filter name=app-under-test --format "{{.ID}}" | grep -q . || { echo "Container exited early"; docker logs app-under-test || true; exit 1; }; (echo > /dev/tcp/${TEST_HOST}/${TEST_PORT}) >/dev/null 2>&1 && break; sleep 2; elapsed=$((elapsed+2)); done'
-      # HTTP smoke test with retries
-      - bash -c 'n=0; until [ $n -ge ${CURL_MAX_RETRIES} ]; do curl -fsS "http://${TEST_HOST}:${TEST_PORT}${TEST_PATH}" >/dev/null && { echo "✅ Smoke test passed"; break; }; n=$((n+1)); echo "Waiting for app... ($n/${CURL_MAX_RETRIES})"; sleep 5; done; [ $n -lt ${CURL_MAX_RETRIES} ] || { echo "❌ Smoke test failed. Dumping logs:"; docker ps -a; docker logs app-under-test || true; docker exec app-under-test sh -c "which ss >/dev/null 2>&1 || (which apk >/dev/null 2>&1 && apk add --no-cache iproute2 >/dev/null || true); ss -lnt 2>/dev/null || netstat -lnt 2>/dev/null || true" || true; exit 1; }'
-      - echo "Stopping container..."
-      - docker stop app-under-test || true
+      - "echo Running container on port ${TEST_PORT}..."
+      - "docker run -d --rm -e PORT=${TEST_PORT} -e HOST=0.0.0.0 -p ${TEST_PORT}:${TEST_PORT} --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}"
+      - "sleep 3"
+      - "docker ps"
+      - "echo Performing HTTP smoke test..."
+      - "bash -c 's=1; for i in $(seq 1 ${CURL_MAX_RETRIES}); do if curl -fsS \"http://127.0.0.1:${TEST_PORT}${TEST_PATH}\" >/dev/null; then s=0; break; fi; echo \"Waiting for app... ($i/${CURL_MAX_RETRIES})\"; sleep 5; done; if [ \"$s\" -ne 0 ]; then echo \"Smoke test failed\"; docker ps -a; docker logs app-under-test || true; exit 1; fi'"
+      - "echo Stopping container..."
+      - "docker stop app-under-test || true"
 
 artifacts:
   files:
