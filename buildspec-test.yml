@@ -14,7 +14,7 @@ phases:
   build:
     commands:
       - echo "Running container for testing..."
-      - docker run -d --name app_test -p 8080:8080 $IMAGE_URI
+      - docker run -d --name app_test -p 3030:3030 $IMAGE_URI
       - echo "Waiting for app to start..."
       - sleep 10
 
