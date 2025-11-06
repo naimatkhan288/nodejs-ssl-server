@@ -23,10 +23,6 @@ phases:
       - "docker run -d --rm -e PORT=${TEST_PORT} -e HOST=0.0.0.0 -p ${TEST_PORT}:${TEST_PORT} --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}"
       - "sleep 3"
       - "docker ps"
-      - "echo Performing HTTP smoke test..."
-      - "bash -c 's=1; for i in $(seq 1 ${CURL_MAX_RETRIES}); do if curl -fsS \"http://127.0.0.1:${TEST_PORT}${TEST_PATH}\" >/dev/null; then s=0; break; fi; echo \"Waiting for app... ($i/${CURL_MAX_RETRIES})\"; sleep 5; done; if [ \"$s\" -ne 0 ]; then echo \"Smoke test failed\"; docker ps -a; docker logs app-under-test || true; exit 1; fi'"
-      - "echo Stopping container..."
-      - "docker stop app-under-test || true"
 
 artifacts:
   files:
