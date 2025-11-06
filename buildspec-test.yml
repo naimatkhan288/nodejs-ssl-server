@@ -1,0 +1,34 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws --version
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - IMAGE_URI=$REPOSITORY_URI:$IMAGE_TAG
+      - echo "Pulling the image for testing..."
+      - docker pull $IMAGE_URI
+
+  build:
+    commands:
+      - echo "Running container for testing..."
+      - docker run -d --name app_test -p 8080:8080 $IMAGE_URI
+      - echo "Waiting for app to start..."
+      - sleep 10
+
+  post_build:
+    commands:
+      - echo "Running smoke tests..."
+      # Example health endpoint test (adjust endpoint/port as per your app)
+      - curl -f http://localhost:8080/health || (echo "Health check failed!" && exit 1)
+      - echo "Container tests passed successfully"
+      - docker stop app_test
+      - docker rm app_test
+
+reports:
+  smoketests:
+    files:
+      - "**/*.log"
+    file-format: TEXT
