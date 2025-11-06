@@ -1,46 +1,35 @@
 version: 0.2
 
+env:
+  variables:
+    IMAGE_NAME: "test-image"
+    IMAGE_TAG: "${IMAGE_TAG:-latest}"
+    TEST_URL: "http://localhost:3000"
+    TEST_COMMAND: "curl -f -s ${TEST_URL} || exit 1"
+
 phases:
   pre_build:
     commands:
-      - set -e
-      - echo "Logging in to Amazon ECR..."
+      - echo "Starting test build on $(date)"
+      - docker --version
       - aws --version
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
-      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
-      - IMAGE_URI=$REPOSITORY_URI:$IMAGE_TAG
-      - echo "Pulling the image for testing..."
-      - docker pull $IMAGE_URI
-
   build:
     commands:
-      - echo "Running container for testing (host 80 -> container 3000)..."
-      - docker run -d --name app_test -p 80:3000 $IMAGE_URI
-      - echo "Waiting for app to start..."
-      - sleep 10
-      - docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-
+      - echo "Building local Docker image..."
+      - docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
   post_build:
     commands:
-      - echo "Running smoke tests with retries on http://localhost/health ..."
-      - |
-        OK=0
-        for i in $(seq 1 30); do
-          if curl -fsS http://localhost/health > health_response.log 2>&1; then
-            echo "Health OK"; cat health_response.log; OK=1; break
-          fi
-          echo "[$i/30] Not ready yet, retrying..."; sleep 2
-        done
+      - echo "Running container for smoke test..."
+      - docker run -d --rm -p 3000:3000 --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}
+      - echo "Waiting for app to be ready..."
+      - sleep 5
+      - echo "Executing test command..."
+      - bash -c "${TEST_COMMAND}"
+      - echo "✅ Tests passed successfully!"
+      - echo "Stopping container..."
+      - docker stop app-under-test || true
 
-        if [ "$OK" -ne 1 ]; then
-          echo "Health check failed. Dumping container logs..."
-          docker ps -a || true
-          docker logs app_test || true
-          # Try from inside the container on its internal port 3000
-          docker exec app_test sh -lc 'command -v curl >/dev/null 2>&1 || (apk add --no-cache curl >/dev/null 2>&1 || (apt-get update && apt-get install -y curl >/dev/null 2>&1) || true); curl -fsS http://127.0.0.1:3000/health' || true
-          exit 1
-        fi
-
-      - echo "Container tests passed successfully"
-      - docker stop app_test
-      - docker rm app_test
+artifacts:
+  files:
+    - "**/*"
+  discard-paths: yes
