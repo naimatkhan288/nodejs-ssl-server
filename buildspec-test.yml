@@ -22,7 +22,7 @@ phases:
     commands:
       - echo "Running smoke tests..."
       # Example health endpoint test (adjust endpoint/port as per your app)
-      - curl -f http://localhost:8080/health || (echo "Health check failed!" && exit 1)
+      - curl -f http://localhost:3000/health || (echo "Health check failed!" && exit 1)
       - echo "Container tests passed successfully"
       - docker stop app_test
       - docker rm app_test
