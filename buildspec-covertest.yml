@@ -1,30 +1,30 @@
-on: 0.2
+version: 0.2
 
 env:
-    variables:
-          IMAGE_NAME: "test-image"
-              IMAGE_TAG: "${IMAGE_TAG:-latest}"
-                  TEST_PORT: "3000"
-                      TEST_PATH: "/"
-                          CURL_MAX_RETRIES: "20"   # 20 * 5s = up to ~100s
+  variables:
+    IMAGE_NAME: "test-image"
+    IMAGE_TAG: "${IMAGE_TAG:-latest}"
+    TEST_PORT: "3000"
+    TEST_PATH: "/"
+    CURL_MAX_RETRIES: "20"   # 20 * 5s = up to ~100s
 
-                          phases:
-                              pre_build:
-                                    commands:
-                                            - "echo Starting test build on $(date)"
-                                                  - "docker --version"
-                                                    build:
-                                                          commands:
-                                                                  - "echo Building local Docker image..."
-                                                                        - "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
-                                                                          post_build:
-                                                                                commands:
-                                                                                        - "echo Running container on port ${TEST_PORT}..."
-                                                                                              - "docker run -d --rm -e PORT=${TEST_PORT} -e HOST=0.0.0.0 -p ${TEST_PORT}:${TEST_PORT} --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}"
-                                                                                                    - "sleep 3"
-                                                                                                          - "docker ps"
+phases:
+  pre_build:
+    commands:
+      - "echo Starting test build on $(date)"
+      - "docker --version"
+  build:
+    commands:
+      - "echo Building local Docker image..."
+      - "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+  post_build:
+    commands:
+      - "echo Running container on port ${TEST_PORT}..."
+      - "docker run -d --rm -e PORT=${TEST_PORT} -e HOST=0.0.0.0 -p ${TEST_PORT}:${TEST_PORT} --name app-under-test ${IMAGE_NAME}:${IMAGE_TAG}"
+      - "sleep 3"
+      - "docker ps"
 
-                                                                                artifacts:
-                                                                                    files:
-                                                                                          - "**/*"
-                                                                                            discard-paths: yes
+artifacts:
+  files:
+    - "**/*"
+  discard-paths: yes
